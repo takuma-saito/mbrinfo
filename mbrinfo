@@ -1,0 +1,111 @@
+#!/bin/bash
+
+. ./functions
+. ./parttype
+
+# 10 進数に変換
+hex2dec() {
+    local number=$(echo $1 | tr '[a-z]' '[A-Z]')
+    echo "obase=10; ibase=16; $number" | bc
+}
+
+# number -> T, G, M, K
+byte_string() {
+    local number=$1 digits=0
+    local digits_list=('Byte' 'KiB' 'MiB' 'GiB' 'TiB' 'PiB')
+    while true; do
+        if [[ $number -lt 1024 ]]; then
+            break;
+        fi
+        digits=$((1 + $digits))
+        number=$(($number / 1024))
+    done
+    if [[ digits -gt ${#digits_list[@]} ]]; then
+        echo "over digits error: $digits"
+        exit 2
+    fi
+    printf "%4d %4s\n" $number ${digits_list[$digits]}
+}
+
+part_header() {
+    echo "        CHS [START]       CHS [END]                   LBA                  Byte      TYPE"
+}
+
+is_bootable() {
+    local boot_type=$1
+    if [[ $boot_type == "80" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# シリンダー数を計算する
+get_cylinder() {
+    local sector=$((0x$1 >> 6)) cylinder=0x$2
+    echo $((($sector * 256) + $cylinder))
+}
+
+# セクター数を計算する
+get_sector() { echo $(( 0x$1 & 63 )); }
+
+# check_boot sector
+mbr_check() {
+    local flg=$(hexdump -v -s 510 -n 2  -e '"%4x"' $partition)
+    printf " signature: "
+    if [[ $flg = "aa55" ]]; then
+        echo "${flg} -> OK"
+    else
+        echo "${flg} -> NG"
+    fi
+}
+
+partinfo() {
+    local partition=$1 offset=$((($2 * 16) + 446)) id=$(($2 + 1))
+    local partinfo=($(echo $(hexdump -v -s $offset -n 16 -e '1/1 "%02x " 3/1 "%02x " 1/1 " %02x " 3/1 "%02x " 2/4 " %d " ""' $partition)))
+    local boot_flg="${partinfo[0]}"
+    local chs_start_head=$(hex2dec ${partinfo[1]})
+    local chs_start_sector=$(get_sector ${partinfo[2]})
+    local chs_start_cylinder=$(get_cylinder ${partinfo[2]} ${partinfo[3]})
+    local chs_end_head=$(hex2dec ${partinfo[5]})
+    local chs_end_sector=$(get_sector ${partinfo[6]})
+    local chs_end_cylinder=$(get_cylinder ${partinfo[6]} ${partinfo[7]})
+    local lba_start="${partinfo[8]}"
+    local lba_end="${partinfo[9]}"
+    local type="${partinfo[4]}"
+
+    if is_bootable $boot_flg; then
+        printf "* "
+    else
+        printf "  "
+    fi
+
+    printf "$id | "
+    printf "%5d %3d %3d   " $chs_start_cylinder $chs_start_head $chs_start_sector
+    printf "%5d %3d %3d   " $chs_end_cylinder $chs_end_head $chs_end_sector
+    printf "[ %12d - %12d ] %s   |" $lba_start $(($lba_start + $lba_end)) "$(byte_string $((($lab_start + $lba_end) * 512)))"
+    printf "%3s -> %s \n" $type "$(part_type $(hex2dec $type))"
+}
+
+usage() {
+    echo "mbrinfo <device> - show mbr information"
+    exit 1
+}
+
+if [[ ! ($# -eq 1) ]]; then
+    usage;
+fi
+
+partition="$1"
+
+if [[ ! -r $partition ]]; then
+    error "file not found $partition"
+    exit 1
+fi
+
+part_header
+for (( i = 0; i < 4; i++ )); do
+    partinfo "$partition" $i
+done
+mbr_check
+

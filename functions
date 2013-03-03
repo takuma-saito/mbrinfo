@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# get OS Signature
+# return:
+#   - gentoo
+#   - centos
+#   - arch
+#   - fedora
+#   - darwin
+
+get_OS() {
+    OS=$(sed -n "1p" /etc/issue 2>/dev/null | awk 'BEGIN {SP = " "} {print $1}' | tr "[A-Z]" "[a-z]")
+    if [[ -z $OS ]]; then
+        if [[ $(uname -r) =~ "gentoo" ]]; then
+            OS="gentoo"
+        elif [[ $(uname -a) =~ "Darwin" ]]; then
+            OS="darwin"
+        fi
+    fi
+    echo $OS
+}
+out() { printf "$1 $2\n" "${@:3}"; }
+error() { out "==> ERROR:" "$@"; } >&2
+die() { error "$@"; exit 1; }
